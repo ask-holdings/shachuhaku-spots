@@ -1,0 +1,830 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0B1519">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>車中泊さがし</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+:root{
+  --ink:#0B1519; --surface:#12232A; --surface-2:#193138; --line:#24424B;
+  --amber:#F4B740; --amber-dim:rgba(244,183,64,.13);
+  --moon:#7FD4C8; --text:#EAF1EE; --muted:#85A19B;
+  --warn:#E8925A; --warn-dim:rgba(232,146,90,.14);
+  --live:#9E8CFF; --live-dim:rgba(158,140,255,.15);
+  --mine:#78D98E; --mine-dim:rgba(120,217,142,.15);
+  --jp:"Zen Kaku Gothic New",system-ui,-apple-system,"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;
+  --num:"Space Grotesk",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--ink); color:var(--text); font-family:var(--jp);
+  -webkit-font-smoothing:antialiased; overflow:hidden; display:flex; flex-direction:column; height:100dvh;}
+button{font-family:inherit; cursor:pointer}
+:focus-visible{outline:2px solid var(--amber); outline-offset:2px; border-radius:6px}
+
+header{padding:calc(10px + env(safe-area-inset-top)) 16px 10px; border-bottom:1px solid var(--line);
+  background:var(--ink); display:flex; align-items:center; gap:12px; flex:0 0 auto;}
+.mark{display:flex; align-items:baseline; gap:8px}
+.mark b{font-weight:700; font-size:17px; letter-spacing:.02em}
+.mark .lamp{width:9px; height:9px; border-radius:50%; background:var(--amber); box-shadow:0 0 10px 1px var(--amber); align-self:center}
+.status{margin-left:auto; text-align:right; font-size:11.5px; color:var(--muted); line-height:1.35}
+.status .src{color:var(--moon); font-family:var(--num); font-weight:500}
+
+#mapwrap{position:relative; flex:0 0 auto; height:36dvh; transition:height .22s ease}
+body.bigmap #mapwrap{height:58dvh}
+#map{position:absolute; inset:0; background:var(--surface); z-index:0}
+.leaflet-container{background:#0d1c22; font-family:var(--jp)}
+.leaflet-control-attribution{background:rgba(11,21,25,.7)!important; color:#6f8b86!important}
+.leaflet-control-attribution a{color:#8fb0aa!important}
+.leaflet-bar a{background:var(--surface-2)!important; color:var(--text)!important; border-color:var(--line)!important}
+#mapwrap.adding{cursor:crosshair}
+#mapwrap.adding #map{box-shadow:inset 0 0 0 2px var(--mine)}
+
+.mapctl{position:absolute; z-index:600; background:rgba(18,35,42,.94); border:1px solid var(--line); color:var(--text);
+  border-radius:10px; font-size:12px; font-weight:700; padding:8px 11px; box-shadow:0 4px 14px rgba(0,0,0,.35);
+  display:flex; align-items:center; gap:7px}
+.mapctl svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2}
+#liveMapBtn{left:50%; transform:translateX(-50%); bottom:10px; border-color:var(--live); color:#c3b8ff; background:rgba(25,22,48,.94)}
+#liveMapBtn:disabled{opacity:.6}
+#liveMapBtn.on svg{animation:spin 1s linear infinite}
+#expandBtn{top:10px; right:10px; padding:8px}
+#legendBtn{bottom:10px; left:10px; padding:8px 10px; color:var(--muted); font-weight:500}
+.legend{position:absolute; left:10px; bottom:46px; z-index:650; background:rgba(11,21,25,.96); border:1px solid var(--line);
+  border-radius:12px; padding:11px 14px; display:none; font-size:11.5px; color:var(--muted); line-height:2; max-width:min(78vw,300px)}
+.legend.show{display:block}
+.legend .sw{display:inline-block; width:10px; height:10px; border-radius:50% 50% 50% 0; transform:rotate(-45deg); margin-right:8px}
+.legend .lnote{line-height:1.6; margin-top:6px; border-top:1px solid var(--line); padding-top:8px}
+
+.banner{position:absolute; top:10px; left:10px; right:10px; z-index:700; background:rgba(18,35,42,.96);
+  border:1px solid var(--mine); border-radius:12px; padding:10px 12px; display:none; align-items:center; gap:10px;
+  box-shadow:0 6px 20px rgba(0,0,0,.4)}
+.banner.show{display:flex}
+.banner .txt{flex:1; font-size:12.5px; line-height:1.4; color:var(--text)}
+.banner .txt b{color:var(--mine)}
+.banner button{border:1px solid var(--line); background:var(--surface-2); color:var(--text);
+  border-radius:8px; padding:7px 10px; font-size:12px; font-weight:700; white-space:nowrap}
+.banner button.pri{background:var(--mine-dim); border-color:var(--mine); color:#bff0cb}
+
+.pin{width:14px; height:14px; border-radius:50% 50% 50% 0; transform:rotate(-45deg); border:1.5px solid rgba(0,0,0,.35)}
+.pin.rv{background:var(--moon)} .pin.michi{background:#9ec7ff}
+.pin.free{background:#a9d98a} .pin.chk{background:var(--warn)} .pin.live{background:var(--live)} .pin.my{background:var(--mine)}
+.pin.sel{transform:rotate(-45deg) scale(1.5); box-shadow:0 0 0 5px rgba(234,241,238,.22), 0 0 12px 2px rgba(244,183,64,.5)}
+.pin.temp{background:var(--mine); width:18px;height:18px; box-shadow:0 0 0 6px var(--mine-dim)}
+.me{width:16px;height:16px;border-radius:50%;background:#5ab7ff;border:2px solid #eaf6ff;box-shadow:0 0 0 6px rgba(90,183,255,.18)}
+.base{width:18px;height:18px;border-radius:50%;background:transparent;border:2px dashed var(--amber);box-shadow:0 0 0 5px var(--amber-dim)}
+
+.filters{flex:0 0 auto; display:flex; gap:8px; padding:11px 16px; overflow-x:auto; border-bottom:1px solid var(--line); background:var(--ink); scrollbar-width:none}
+.filters::-webkit-scrollbar{display:none}
+.chip{flex:0 0 auto; display:flex; align-items:center; gap:6px; padding:7px 13px; background:var(--surface);
+  border:1px solid var(--line); color:var(--muted); border-radius:999px; font-size:13px; font-weight:500; transition:.15s}
+.chip svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.7}
+.chip[aria-pressed="true"]{background:var(--amber-dim); border-color:var(--amber); color:var(--amber)}
+.chip .cnt{font-family:var(--num); font-size:11px; opacity:.7}
+
+.list{flex:1 1 auto; overflow-y:auto; padding:12px 12px calc(150px + env(safe-area-inset-bottom)); -webkit-overflow-scrolling:touch}
+.hint{color:var(--muted); font-size:13px; text-align:center; padding:30px 24px; line-height:1.7}
+.hint b{color:var(--amber); font-weight:500}
+.bandhead{font-size:11px; color:var(--muted); letter-spacing:.08em; margin:16px 6px 9px; display:flex; align-items:center; gap:10px; font-family:var(--num)}
+.bandhead:first-child{margin-top:2px}
+.bandhead::after{content:''; flex:1; height:1px; background:var(--line)}
+.notice{font-size:11.5px; color:var(--muted); background:var(--surface); border:1px dashed var(--line); border-radius:10px;
+  padding:8px 12px; margin-bottom:10px; line-height:1.6}
+
+.card{display:flex; gap:14px; align-items:stretch; width:100%; text-align:left; background:var(--surface);
+  border:1px solid var(--line); border-radius:14px; padding:13px 14px; margin-bottom:9px; color:var(--text); transition:.14s}
+.card:hover,.card:active{background:var(--surface-2); border-color:#2f5560}
+.card.live{border-style:dashed; border-color:#3a3560}
+.card.my{border-color:#2f5a3e}
+.dist{flex:0 0 auto; width:66px; display:flex; flex-direction:column; align-items:flex-start; justify-content:center; border-right:1px solid var(--line); padding-right:12px}
+.dist .v{font-family:var(--num); font-weight:600; font-size:23px; color:var(--moon); line-height:1; letter-spacing:-.01em; font-variant-numeric:tabular-nums}
+.dist .u{font-family:var(--num); font-size:11px; color:var(--muted); margin-top:3px; letter-spacing:.04em}
+.dist .u.dir{color:var(--moon); opacity:.6}
+.arw{display:inline-block; margin-right:2px; font-size:10px}
+.body{flex:1 1 auto; min-width:0}
+.name{font-weight:700; font-size:15.5px; line-height:1.3; margin:1px 0 3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.meta{font-size:12px; color:var(--muted); display:flex; align-items:center; gap:7px; flex-wrap:wrap}
+.tag{font-size:11px; padding:1px 7px; border-radius:5px; background:var(--surface-2); color:#a9c6c0}
+.tag.chk{background:var(--warn-dim); color:var(--warn); font-weight:500}
+.tag.cand{background:var(--amber-dim); color:var(--amber)}
+.tag.live{background:var(--live-dim); color:#c3b8ff; font-weight:500}
+.tag.my{background:var(--mine-dim); color:#bff0cb; font-weight:500}
+.amen{display:flex; align-items:center; gap:11px; margin-top:9px}
+.amen .i{display:flex; align-items:center; gap:4px; font-size:11.5px; color:var(--muted)}
+.amen .i.on{color:var(--text)}
+.amen svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.7}
+.amen .i.on svg{stroke:var(--amber)}
+.quiet{display:flex; align-items:center; gap:5px; margin-left:auto; font-size:11px; color:var(--muted)}
+.dots{display:flex; gap:3px}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--line)} .dot.f{background:var(--moon)}
+.livemeta{margin-top:8px; font-size:11.5px; color:var(--muted)}
+.myfoot{margin:14px 4px 4px; text-align:center; font-size:12px; color:var(--muted)}
+.myfoot b{color:var(--mine); font-family:var(--num)}
+.linkbtn{background:none; border:none; color:var(--moon); font-size:12px; text-decoration:underline; padding:4px}
+
+.scrim{position:fixed; inset:0; background:rgba(4,10,12,.62); opacity:0; pointer-events:none; transition:.22s; z-index:900; backdrop-filter:blur(2px)}
+.scrim.open{opacity:1; pointer-events:auto}
+.sheet{position:fixed; left:0; right:0; bottom:0; z-index:901; background:var(--surface); border-top:1px solid var(--line);
+  border-radius:20px 20px 0 0; padding:8px 20px calc(22px + env(safe-area-inset-bottom));
+  transform:translateY(101%); transition:transform .26s cubic-bezier(.22,1,.36,1); max-height:86dvh; overflow-y:auto; overscroll-behavior:contain}
+.sheet.open{transform:translateY(0)}
+.grab{width:38px;height:4px;border-radius:99px;background:var(--line);margin:6px auto 14px}
+.s-top{display:flex; align-items:flex-start; gap:12px}
+.s-name{font-size:19px; font-weight:700; line-height:1.3; flex:1}
+.s-close{flex:0 0 auto; width:34px;height:34px;border-radius:50%; background:var(--surface-2); border:1px solid var(--line); color:var(--muted); font-size:17px; line-height:1}
+.s-dist{display:flex; align-items:baseline; gap:6px; margin:12px 0 2px}
+.s-dist .v{font-family:var(--num); font-size:30px; font-weight:600; color:var(--moon); letter-spacing:-.01em}
+.s-dist .u{font-family:var(--num); font-size:13px; color:var(--muted)}
+.s-dist .sep{color:var(--line)} .s-dist .cat{font-size:13px; color:var(--muted); font-weight:400}
+.s-amen{display:grid; grid-template-columns:1fr 1fr; gap:10px 14px; margin:14px 0 4px}
+.s-amen .i{display:flex; align-items:center; gap:9px; font-size:13.5px; color:var(--muted)}
+.s-amen .i.on{color:var(--text)}
+.s-amen svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.7; flex:0 0 auto}
+.s-amen .i.on svg{stroke:var(--amber)}
+.s-quiet{display:flex; align-items:center; gap:9px; margin:16px 0 6px; font-size:13.5px; color:var(--text)}
+.note{border-radius:11px; padding:11px 13px; font-size:12.5px; line-height:1.6; margin:14px 0}
+.note.warn{background:var(--warn-dim); border:1px solid rgba(232,146,90,.3); color:#f0b58f}
+.note.cand{background:var(--amber-dim); border:1px solid rgba(244,183,64,.3); color:#f0d296}
+.note.live{background:var(--live-dim); border:1px solid rgba(158,140,255,.3); color:#cbc2ff}
+.memo{color:#c9dbd6; font-size:14px; line-height:1.85; margin:16px 0 4px}
+.actions{display:flex; gap:10px; margin-top:18px}
+.btn{flex:1; display:flex; align-items:center; justify-content:center; gap:8px; padding:14px; border-radius:12px; font-size:14.5px; font-weight:700; border:1px solid var(--line); text-decoration:none}
+.btn svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2}
+.btn.go{background:var(--amber); color:#20160a; border-color:var(--amber)}
+.btn.map{background:var(--surface-2); color:var(--text)}
+.btn.sm{padding:11px; font-size:13.5px; font-weight:700}
+.btn.edit{background:var(--surface-2); color:#bff0cb; border-color:#2f5a3e}
+.btn.del{background:var(--surface-2); color:#e88; border-color:#5a2f2f}
+
+/* form */
+.field{margin:14px 0}
+.field label{display:block; font-size:12px; color:var(--muted); margin-bottom:6px; font-weight:500}
+.field input[type=text], .field textarea{width:100%; background:var(--ink); border:1px solid var(--line); color:var(--text);
+  border-radius:10px; padding:11px 12px; font-family:inherit; font-size:14px}
+.field textarea{min-height:74px; resize:vertical; line-height:1.6}
+.toggles{display:flex; gap:8px; flex-wrap:wrap}
+.tg{display:flex; align-items:center; gap:6px; padding:8px 12px; background:var(--ink); border:1px solid var(--line); color:var(--muted); border-radius:999px; font-size:13px; font-weight:500}
+.tg[aria-pressed="true"]{background:var(--amber-dim); border-color:var(--amber); color:var(--amber)}
+.qsel{display:flex; gap:8px}
+.qbtn{flex:1; padding:9px; background:var(--ink); border:1px solid var(--line); color:var(--muted); border-radius:10px; font-size:13px; font-weight:600}
+.qbtn[aria-pressed="true"]{background:var(--moon); color:#08201c; border-color:var(--moon)}
+.poshint{font-size:11.5px; color:var(--muted); margin-top:6px}
+
+.fabs{position:fixed; right:16px; z-index:800; bottom:calc(16px + env(safe-area-inset-bottom)); display:flex; flex-direction:column; gap:12px}
+.fab{width:52px;height:52px;border-radius:50%; border:1px solid var(--line); display:flex; align-items:center; justify-content:center; box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.fab svg{width:23px;height:23px;stroke:currentColor;fill:none;stroke-width:2}
+.fab.locate{background:var(--surface-2); color:var(--moon)}
+.fab.locate.on{border-color:var(--moon); box-shadow:0 0 0 2px rgba(127,212,200,.3), 0 8px 24px rgba(0,0,0,.4)}
+.fab.add{background:var(--mine); color:#08210f; border-color:var(--mine)}
+.fab.locate.loading svg{animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.toast{position:fixed; left:50%; bottom:calc(90px + env(safe-area-inset-bottom)); transform:translateX(-50%) translateY(20px);
+  background:var(--surface-2); border:1px solid var(--line); color:var(--text); padding:10px 16px; border-radius:10px;
+  font-size:13px; z-index:950; opacity:0; pointer-events:none; transition:.25s; box-shadow:0 8px 24px rgba(0,0,0,.4); max-width:88vw; text-align:center; line-height:1.5}
+.toast.show{opacity:1; transform:translateX(-50%) translateY(0)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <div class="mark"><span class="lamp"></span><b>車中泊さがし</b></div>
+  <div class="status"><div id="statusMain">現在地を取得中…</div><div class="src" id="statusSrc"></div></div>
+</header>
+
+<div id="mapwrap">
+  <div id="map"></div>
+  <button class="mapctl" id="expandBtn" aria-label="地図を拡大/縮小" title="地図の大きさを切り替え"><svg viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg></button>
+  <button class="mapctl" id="legendBtn" aria-expanded="false">凡例</button>
+  <div class="legend" id="legend">
+    <div><span class="sw" style="background:#9ec7ff"></span>道の駅</div>
+    <div><span class="sw" style="background:var(--moon)"></span>RVパーク・キャンプ場</div>
+    <div><span class="sw" style="background:var(--warn)"></span>要確認（本来は宿泊地でない等）</div>
+    <div><span class="sw" style="background:var(--mine)"></span>自分で追加したスポット</div>
+    <div><span class="sw" style="background:var(--live)"></span>OSM候補（ライブ検索・未確認）</div>
+    <div class="lnote">「このあたりを検索」は、表示中の地図の範囲（3〜30km）からOSMの候補を探します。地図をタップするとその地点が基準点になります。</div>
+  </div>
+  <button class="mapctl" id="liveMapBtn" title="表示中の地図範囲からOSMの候補を探します（要通信・未確認）">
+    <svg viewBox="0 0 24 24"><path d="M5 12a7 7 0 0114 0M2 12a10 10 0 0120 0M8.5 12a3.5 3.5 0 017 0"/><circle cx="12" cy="12" r="1"/></svg>このあたりを検索
+  </button>
+  <div class="banner" id="banner">
+    <div class="txt" id="bannerTxt"><b>追加する場所</b>を地図でタップ</div>
+    <button class="pri" id="bnCurrent">現在地を使う</button>
+    <button id="bnCancel">やめる</button>
+  </div>
+</div>
+
+<div class="filters" id="filters">
+  <button class="chip" data-f="wc" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M6 3v18M18 3v18M6 8h12"/><circle cx="6" cy="5.5" r="1.4"/><circle cx="18" cy="5.5" r="1.4"/></svg>トイレ<span class="cnt"></span></button>
+  <button class="chip" data-f="h24" aria-pressed="false"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>24時間<span class="cnt"></span></button>
+  <button class="chip" data-f="free" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M6 4l6 7 6-7M12 11v9M8 15h8M8 18h8"/></svg>無料<span class="cnt"></span></button>
+  <button class="chip" data-f="onsen" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M8 14c-1 1.5-1 3 0 4M12 13c-1 1.7-1 3.3 0 5M16 14c-1 1.5-1 3 0 4M4 21h16"/></svg>温泉近く<span class="cnt"></span></button>
+  <button class="chip" data-f="quiet" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M4 14h4l5 5V5L8 10H4zM17 9c1.5 1.5 1.5 4.5 0 6"/></svg>静か<span class="cnt"></span></button>
+</div>
+
+<div class="list" id="list"></div>
+
+<div class="fabs">
+  <button class="fab add" id="addFab" aria-label="スポットを追加"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+  <button class="fab locate" id="fab" aria-label="現在地に移動 / 追尾の切り替え"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button>
+</div>
+
+<div class="toast" id="toast"></div>
+<div class="scrim" id="scrim"></div>
+<div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-label="スポット詳細"><div class="grab"></div><div id="sheetBody"></div></div>
+<div class="sheet" id="formSheet" role="dialog" aria-modal="true" aria-label="スポットを追加"><div class="grab"></div><div id="formBody"></div></div>
+<div class="sheet" id="dataSheet" role="dialog" aria-modal="true" aria-label="データ"><div class="grab"></div><div id="dataBody"></div></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const SPOTS = [{"n":"道の駅 信州新町","cat":"道の駅","area":"長野市","chk":false,"lat":36.585,"lng":138.0525,"q":2,"wc":true,"h24":true,"free":true,"onsen":false,"m":"国道19号沿いでトイレと駐車場は24時間。休日の朝は混みやすい。名物はジンギスカン。","t":0},{"n":"道の駅 花の駅千曲川","cat":"道の駅","area":"飯山市","chk":false,"lat":36.8819,"lng":138.3884,"q":2,"wc":true,"h24":true,"free":true,"onsen":false,"m":"山の眺めがよく車中泊にも使われる。トイレ・洗面あり。カフェとモンベルが併設。","t":0},{"n":"道の駅 中条","cat":"道の駅","area":"長野市","chk":false,"lat":36.6037,"lng":138.0157,"q":3,"wc":true,"h24":true,"free":true,"onsen":false,"m":"白馬・大町方面の途中にある静かな山あいの駅。おやきが名物。","t":0},{"n":"道の駅 オアシスおぶせ","cat":"道の駅","area":"小布施町","chk":false,"lat":36.6893,"lng":138.2945,"q":2,"wc":true,"h24":true,"free":true,"onsen":false,"m":"車中泊利用者が多く公園併設。トイレは清潔。高速のPAからも歩いて入れる。","t":0},{"n":"道の駅 長野市大岡特産センター","cat":"道の駅","area":"長野市","chk":false,"lat":36.527,"lng":137.9589,"q":3,"wc":true,"h24":true,"free":true,"onsen":false,"m":"静かでのんびりした山あいの駅。そば屋あり。釣り客も立ち寄る落ち着いた場所。","t":0},{"n":"道の駅 今井恵の里","cat":"道の駅","area":"松本市","chk":false,"lat":36.1483,"lng":137.9028,"q":2,"wc":true,"h24":true,"free":true,"onsen":false,"m":"松本空港の近く。平地で出入りしやすく地元客が中心。水曜定休。","t":0},{"n":"道の駅 アルプス安曇野ほりがねの里","cat":"道の駅","area":"安曇野市","chk":false,"lat":36.2934,"lng":137.8778,"q":2,"wc":true,"h24":true,"free":true,"onsen":false,"m":"北アルプスの眺めが良い。広い公衆トイレとレンタサイクルあり。朝は野菜が早く売り切れる。","t":0},{"n":"道の駅 風穴の里","cat":"道の駅","area":"松本市","chk":false,"lat":36.1532,"lng":137.7519,"q":3,"wc":true,"h24":true,"free":true,"onsen":false,"m":"上高地方面の途中。広い駐車場で暗めの場所も選べる。ダム湖が近く静かめで車中泊向き。","t":0},{"n":"道の駅 ふるさと豊田","cat":"道の駅","area":"中野市","chk":false,"lat":36.8009,"lng":138.3225,"q":2,"wc":true,"h24":true,"free":true,"onsen":false,"m":"駐車場が広く食堂は大盛り。地元の直売所も充実している。","t":0},{"n":"道の駅 安曇野松川","cat":"道の駅","area":"松川村","chk":false,"lat":36.3959,"lng":137.8679,"q":2,"wc":true,"h24":true,"free":true,"onsen":false,"m":"車中泊に使われる定番。夜も車の出入りはあるが比較的静か。トイレはきれい。","t":0},{"n":"道の駅 池田","cat":"道の駅","area":"池田町","chk":false,"lat":36.397,"lng":137.8846,"q":2,"wc":true,"h24":true,"free":true,"onsen":false,"m":"ハーブ園併設。夜は道路向かい側のトイレが使える。駐車は約40台分。","t":0},{"n":"道の駅 雷電くるみの里","cat":"道の駅","area":"東御市","chk":false,"lat":36.3557,"lng":138.3739,"q":2,"wc":true,"h24":true,"free":true,"onsen":false,"m":"浅間山が見える人気の駅。くるみおはぎが名物。週末は混みやすい。","t":0},{"n":"道の駅 みまき","cat":"道の駅","area":"東御市","chk":false,"lat":36.3348,"lng":138.3597,"q":1,"wc":true,"h24":true,"free":true,"onsen":true,"m":"布引温泉みまきの湯が併設。24時間トイレは道路向かいだがトラックで騒がしめ。","t":0},{"n":"RVパーク 駒ヶ岳","cat":"RVパーク","area":"駒ヶ根市","chk":false,"lat":35.74,"lng":137.9076,"q":2,"wc":true,"h24":true,"free":false,"onsen":true,"m":"駒ヶ根ICから至近。オーナーが親切でトイレが清潔。近くの温泉「こまくさの湯」割引あり。予約制。","t":0},{"n":"RVパーク CamPark飯綱","cat":"RVパーク","area":"飯綱町","chk":false,"lat":36.7441,"lng":138.2499,"q":2,"wc":true,"h24":true,"free":false,"onsen":false,"m":"住宅街の中の小規模RVパーク。夜8時以降は車外での会話禁止など静粛ルールあり。戸隠観光の拠点に。","t":0},{"n":"RV Park 飯田 猿倉","cat":"RVパーク","area":"飯田市","chk":false,"lat":35.5244,"lng":137.79,"q":3,"wc":true,"h24":true,"free":false,"onsen":true,"m":"川沿いの静かなRVパーク。ホテル並みのトイレと貸切風呂・レストラン併設。景色と静けさが評判。","t":0},{"n":"RVパーク 善光寺下","cat":"RVパーク","area":"長野市","chk":false,"lat":36.6579,"lng":138.1942,"q":2,"wc":true,"h24":true,"free":false,"onsen":false,"m":"善光寺・権堂の繁華街に近く飲みに出られる。昼間は交通量あり、夜は快適に眠れる。","t":0},{"n":"RVパーク ゆーとろん水神の湯","cat":"RVパーク","area":"富士見町","chk":false,"lat":35.9147,"lng":138.2119,"q":2,"wc":true,"h24":true,"free":false,"onsen":true,"m":"強アルカリ性の温泉が入り放題。標高が高く夏も涼しい。区画により砂利で水たまりができやすい。","t":0},{"n":"RVパーク白馬","cat":"RVパーク","area":"白馬村","chk":false,"lat":36.7,"lng":137.8509,"q":2,"wc":true,"h24":true,"free":false,"onsen":true,"m":"北アルプスの眺望。八方尾根まで徒歩圏で温泉・スーパーも近い。区画が広く清潔。予約制。","t":0},{"n":"RVパーク 蓼科 ラ・プラネート","cat":"RVパーク","area":"茅野市","chk":false,"lat":36.0802,"lng":138.2596,"q":3,"wc":true,"h24":true,"free":false,"onsen":true,"m":"1台貸切でとても静か。貸切風呂・トイレは暗証番号で利用。蓼科の星空がきれい。鹿に注意。","t":0},{"n":"RVパーク 八ヶ岳高原 原村 もみの木","cat":"RVパーク","area":"原村","chk":false,"lat":35.9666,"lng":138.2552,"q":3,"wc":true,"h24":true,"free":false,"onsen":true,"m":"元テニスコートで平ら。標高が高く夏でも涼しい。道路向かいに日帰り温泉。静かで熟睡できる。","t":0},{"n":"やひこRVパーク","cat":"RVパーク","area":"弥彦村","chk":false,"lat":37.6765,"lng":138.8268,"q":3,"wc":true,"h24":true,"free":false,"onsen":true,"m":"日帰り温泉「さくらの湯」併設。夜は静かで朝の散歩が気持ちいい。電源・ゴミ処理込みで清潔。","t":0},{"n":"海辺のRVステーション 波と空","cat":"RVパーク","area":"柏崎市","chk":false,"lat":37.5079,"lng":138.6491,"q":3,"wc":true,"h24":true,"free":false,"onsen":false,"m":"目の前が海で夕日が絶景。オーナー夫妻が親切で朝食注文も可。サーフィンにも人気。","t":0},{"n":"RVパーク NC21+ピーキャン","cat":"RVパーク","area":"南魚沼市","chk":false,"lat":37.047,"lng":138.8652,"q":2,"wc":true,"h24":true,"free":false,"onsen":true,"m":"国道沿いだが気にならない静かさ。電源・ゴミ込みでコスパ良し。近くに温泉あり。コインランドリーも。","t":0},{"n":"マリンドリーム能生","cat":"道の駅内RVパーク","area":"糸魚川市","chk":false,"lat":37.1145,"lng":138.0055,"q":2,"wc":true,"h24":true,"free":false,"onsen":false,"m":"道の駅の中にあり日本海の眺めが最高。カニや海鮮がその場で食べられる。トイレはやや遠い。","t":0},{"n":"道の駅 うみてらす名立","cat":"道の駅","area":"上越市","chk":false,"lat":37.1634,"lng":138.0867,"q":2,"wc":true,"h24":true,"free":true,"onsen":true,"m":"海沿いで24時間営業。温泉併設でトイレも清潔、車中泊にも使いやすいと好評。","t":0},{"n":"道の駅 よしかわ杜氏の郷","cat":"道の駅","area":"上越市","chk":false,"lat":37.2419,"lng":138.377,"q":2,"wc":true,"h24":true,"free":true,"onsen":true,"m":"酒蔵併設で日本酒の試飲も。駐車場にコンビニがあり安心。目の前に日帰り温泉。","t":0},{"n":"道の駅 あらい","cat":"道の駅","area":"妙高市","chk":false,"lat":37.0257,"lng":138.2268,"q":2,"wc":true,"h24":true,"free":true,"onsen":false,"m":"飲食店や店舗が充実した大型の道の駅。妙高への途中で立ち寄りやすく駐車場も広い。","t":0},{"n":"RVパーク 天然温泉 湯めごこち","cat":"RVパーク","area":"立山町","chk":false,"lat":36.6876,"lng":137.3044,"q":3,"wc":true,"h24":true,"free":false,"onsen":true,"m":"隣に温泉施設。主要道路沿いだが夜も朝も静か。トイレは施錠式で清潔、数はやや少なめ。","t":0},{"n":"道の駅 KOKOくろべ","cat":"道の駅","area":"黒部市","chk":false,"lat":36.8776,"lng":137.4284,"q":2,"wc":true,"h24":true,"free":true,"onsen":true,"m":"大型で広い駐車場。子ども向け遊具や飲食が充実。近くに温泉・ホテルあり。車中泊利用あり。","t":0},{"n":"道の駅 雨晴","cat":"道の駅","area":"高岡市","chk":false,"lat":36.8149,"lng":137.0415,"q":2,"wc":true,"h24":true,"free":true,"onsen":false,"m":"海越しに立山連峰が見える絶景スポット。トイレはきれい。駐車場は大きくないので注意。","t":0},{"n":"道の駅 細入","cat":"道の駅","area":"富山市","chk":false,"lat":36.4886,"lng":137.2382,"q":2,"wc":true,"h24":true,"free":true,"onsen":false,"m":"渓谷沿いで遊具や神社もある。国道41号沿いで岐阜方面の途中に便利。","t":0},{"n":"RVパーク N*BASE","cat":"RVパーク","area":"笛吹市","chk":false,"lat":35.6253,"lng":138.6261,"q":3,"wc":true,"h24":true,"free":false,"onsen":true,"m":"焚き火ができるRVパーク。トイレ・炊事場が清潔でオーナーが親切。車で10〜15分に温泉多数、スーパーも近い。","t":0},{"n":"RVパーク やまなみの湯","cat":"RVパーク","area":"南アルプス市","chk":false,"lat":35.5848,"lng":138.4978,"q":2,"wc":true,"h24":true,"free":false,"onsen":true,"m":"温泉が入り放題で食事も可。徒歩圏にスーパーと7-11。トイレはやや遠い。夕方まで運動音がある日も。","t":0},{"n":"RVパーク Annex道志","cat":"RVパーク","area":"道志村","chk":false,"lat":35.4965,"lng":138.9878,"q":3,"wc":true,"h24":true,"free":false,"onsen":true,"m":"静かで清潔。良質な風呂に何度も入れる。スタッフが親切で道の駅まで散歩も。","t":0},{"n":"RVパーク Luxway南アルプス","cat":"RVパーク","area":"南アルプス市","chk":false,"lat":35.6658,"lng":138.4787,"q":3,"wc":true,"h24":true,"free":false,"onsen":false,"m":"区画が広く施設が清潔。チェックインも簡単で英語・中国語対応。隣家が近いので静粛を。富士山も少し見える。","t":0},{"n":"RVパーク フジRVフィールド","cat":"RVパーク","area":"富士宮市","chk":false,"lat":35.2187,"lng":138.6603,"q":3,"wc":true,"h24":true,"free":false,"onsen":false,"m":"富士山ビューで安く静か。シャワー・電源・芝生・ドッグラン完備。徒歩2分に7-11。","t":0},{"n":"RVパーク TiC! ふじさん朝霧高原","cat":"RVパーク","area":"富士宮市","chk":false,"lat":35.3585,"lng":138.5831,"q":3,"wc":true,"h24":true,"free":false,"onsen":true,"m":"家族風呂が清潔。混んでいても静かで快適。朝霧高原で富士山の眺めが良い。無人運営で自販機精算。","t":0},{"n":"RVパーク ITAZUMA","cat":"RVパーク","area":"御殿場市","chk":false,"lat":35.2822,"lng":138.8949,"q":3,"wc":true,"h24":true,"free":false,"onsen":false,"m":"目の前に富士山。夜は真っ暗で静かでカエルの声。星空がきれい。トイレ・炊事場が清潔。水は飲用不可。","t":0},{"n":"常願寺川河川敷野営場","cat":"河川敷・無料野営場","area":"富山市","chk":false,"lat":36.6969,"lng":137.2794,"q":3,"wc":false,"h24":true,"free":true,"onsen":true,"m":"行政公認の無料の河川敷野営場で車中泊・テント可。トイレは常願寺川公園側にありやや遠い。設備なし。近くに温泉「湯めごこち」。","t":0},{"n":"長野運動公園 駐車場","cat":"公園駐車場","area":"長野市","chk":true,"lat":36.66,"lng":138.231,"q":2,"wc":true,"h24":true,"free":true,"onsen":false,"m":"24時間開放で無料・トイレあり。本来は車中泊用ではないため長時間の宿泊は控えめに。イベント時は混雑。","t":0},{"n":"水ヶ塚駐車場","cat":"登山口駐車場","area":"裾野市","chk":true,"lat":35.3055,"lng":138.7707,"q":2,"wc":true,"h24":true,"free":true,"onsen":false,"m":"富士山ビューの大型駐車場で24時間・無料。富士登山の拠点で夏は混雑。仮眠利用が多いが宿泊可否は要確認。","t":0},{"n":"河口湖公園","cat":"公園駐車場","area":"富士河口湖町","chk":true,"lat":35.4794,"lng":138.7588,"q":2,"wc":true,"h24":true,"free":true,"onsen":false,"m":"湖畔でトイレ・駐車場あり富士山ビュー。24時間だが観光地のため宿泊は要配慮・要確認。","t":0},{"n":"神通川緑地公園","cat":"河川敷公園","area":"富山市","chk":true,"lat":36.69,"lng":137.1999,"q":2,"wc":true,"h24":true,"free":true,"onsen":false,"m":"立山連峰と飛行機が見える河川敷。24時間・無料で静か。トイレの位置と宿泊可否は要確認。","t":0},{"n":"大島北野河川公園","cat":"河川敷公園","area":"射水市","chk":true,"lat":36.7491,"lng":137.0501,"q":3,"wc":true,"h24":true,"free":true,"onsen":false,"m":"芝生がきれいで人が少なく静か。24時間・無料。パークゴルフ場併設。宿泊可否は要確認。","t":0},{"n":"RVパークライト赤砂崎公園 車中泊場","cat":"RVパーク","area":"下諏訪町","chk":true,"lat":36.059981,"lng":138.076685,"q":2,"wc":true,"h24":true,"free":false,"onsen":true,"m":"諏訪湖畔の公園にある車中泊専用区画（約6台）。要予約で、平日昼の電話かネット予約。電源あり。諏訪湖の釣りの拠点に。","t":1},{"n":"RVパーク こころ屋","cat":"RVパーク","area":"諏訪市","chk":false,"lat":36.0077,"lng":138.102,"q":2,"wc":true,"h24":true,"free":false,"onsen":true,"m":"諏訪湖・諏訪大社めぐりに便利な小規模RVパーク。オーナーが親切で清潔。チェックインが15:30と早め。自家製パンが評判でゴミ処理も安い。","t":1},{"n":"道の駅 南アルプスむら長谷","cat":"道の駅","area":"伊那市","chk":false,"lat":35.8103,"lng":138.0834,"q":2,"wc":true,"h24":true,"free":true,"onsen":false,"m":"国道152号沿いの広い駐車場。行列のできるクロワッサンが名物（要予約）。仙丈・南アルプス方面の拠点。","t":1},{"n":"道の駅 田切の里","cat":"道の駅","area":"飯島町","chk":false,"lat":35.6908,"lng":137.9401,"q":2,"wc":true,"h24":true,"free":true,"onsen":false,"m":"中央アルプスを望む道の駅。巨大ソフトクリームと蕎麦が名物。自販機が充実し伊那谷ドライブの休憩に。","t":1},{"n":"道の駅 花の里いいじま","cat":"道の駅","area":"飯島町","chk":false,"lat":35.6616,"lng":137.9104,"q":2,"wc":true,"h24":true,"free":true,"onsen":false,"m":"中央・南アルプスの眺望。りんご直売とアップルパイが評判。田切の里とすぐ近く。","t":1},{"n":"小黒川渓谷キャンプ場","cat":"キャンプ場","area":"伊那市","chk":true,"lat":35.8314,"lng":137.8753,"q":3,"wc":true,"h24":true,"free":false,"onsen":false,"m":"星空と渓流がきれいなキャンプ場。川遊び・渓流釣りができスタッフが親切。炊事場・トイレが清潔。車中泊はオートサイト利用・要予約。","t":1},{"n":"赤倉の森オートキャンプ場","cat":"オートキャンプ場","area":"長和町","chk":false,"lat":36.1935,"lng":138.2088,"q":3,"wc":true,"h24":true,"free":false,"onsen":false,"m":"森の中の静かなオートキャンプ場。釣り堀・川遊びも。区画が木立で仕切られ清潔。中山道歩きの拠点。","t":1},{"n":"阿寺渓谷キャンプ場","cat":"キャンプ場","area":"大桑村","chk":true,"lat":35.7016,"lng":137.5801,"q":3,"wc":true,"h24":true,"free":false,"onsen":false,"m":"エメラルド色の阿寺渓谷沿い。小さな池で釣った魚を食べられる。トイレは汲み取り・シャワーなし。道が細いので早着推奨。要予約。","t":1},{"n":"トラウトキャンプソロー","cat":"管理釣り場・キャンプ場","area":"木曽町","chk":true,"lat":35.935,"lng":137.5761,"q":3,"wc":true,"h24":true,"free":false,"onsen":false,"m":"標高1200mの川沿い。管理釣り場でニジマス、川釣り、水風呂・サウナ・五右衛門風呂まである自由なキャンプ場。ソロ向き。要予約。","t":1},{"n":"大栗湖キャンプ場","cat":"キャンプ場","area":"下條村","chk":true,"lat":35.3955,"lng":137.7626,"q":2,"wc":true,"h24":true,"free":false,"onsen":false,"m":"湖畔の静かなキャンプ場。夜はカエルの声。小さめの風呂あり、こだわるなら近くの温泉へ。トイレ少なめ。要予約。","t":1},{"n":"河口湖オートキャンプ場","cat":"オートキャンプ場","area":"富士河口湖町","chk":false,"lat":35.4843,"lng":138.7529,"q":3,"wc":true,"h24":true,"free":false,"onsen":false,"m":"道沿いだが自然に囲まれ静か。キッチン・洗濯機・シャワー完備（シャワー3分200円）。キャンピングカーの車中泊にちょうどいい。","t":1},{"n":"森と湖の楽園 WorkShopCampResort","cat":"キャンプ場","area":"富士河口湖町","chk":false,"lat":35.4766,"lng":138.748,"q":3,"wc":true,"h24":true,"free":false,"onsen":true,"m":"木々に囲まれ静か。小さな温泉・サウナ・BBQあり。イベントが多くファミリー向け。夜は冷えるので防寒を。","t":1},{"n":"河口湖オートキャンプ場 小立","cat":"オートキャンプ場","area":"富士河口湖町","chk":false,"lat":35.4999,"lng":138.7482,"q":2,"wc":true,"h24":true,"free":false,"onsen":false,"m":"カウボーイ風の小さなオートキャンプ場。1組貸切に近く、飛び込みでも対応してくれることがある。道に近いので耳栓推奨。","t":1},{"n":"RVパークsmart 富士山野営道具店","cat":"RVパーク","area":"鳴沢村","chk":false,"lat":35.4837,"lng":138.7169,"q":2,"wc":true,"h24":true,"free":false,"onsen":false,"m":"富士山麓の無人RVパーク。QRでチェックイン、トイレ・シャワーは施錠式で夜も暖房・清潔。焚き火不可・電源のみ。トラックの通る道沿い。","t":1},{"n":"道の駅 木曽ならかわ","cat":"道の駅","area":"塩尻市","chk":false,"lat":35.9862,"lng":137.8431,"q":2,"wc":true,"h24":true,"free":true,"onsen":false,"m":"建物裏に照明の少ない広い駐車場でキャンピングカー利用が多い。国道19号沿い。朝は電車の音がすることも。木曽漆器の店。","t":1},{"n":"道の駅 奈良井木曽の大橋","cat":"道の駅","area":"塩尻市","chk":false,"lat":35.9674,"lng":137.8147,"q":3,"wc":true,"h24":true,"free":true,"onsen":false,"m":"奈良井宿の玄関口。照明が少なく静かで眠りやすいとの声。トイレは広め。国道沿いで正面の駐車は少なめ。","t":1},{"n":"SBP サンセット・ビーチ・パーキング","cat":"RVパーク","area":"柏崎市","chk":false,"lat":37.3562,"lng":138.5161,"q":2,"wc":true,"h24":true,"free":false,"onsen":true,"m":"鯨波海岸の目の前。海水浴・釣りに最適、向かいの宿で入浴可（500円）。区画が川側に傾斜、レベラーがあると安心。県道と線路が近く静けさは普通。","t":1},{"n":"道の駅 草津運動茶屋公園","cat":"道の駅","area":"草津町","chk":false,"lat":36.6148,"lng":138.5903,"q":2,"wc":true,"h24":true,"free":true,"onsen":true,"m":"草津温泉の手前にある道の駅。観光案内が親切で土産・食事も充実。歩道橋で両側を行き来。草津の拠点に。","t":1},{"n":"西湖 湖畔キャンプ場","cat":"キャンプ場","area":"富士河口湖町","chk":true,"lat":35.5048,"lng":138.6997,"q":2,"wc":true,"h24":true,"free":false,"onsen":false,"m":"西湖の湖畔でヘラ・バス釣りにも。逆さ富士のポイント。トイレは有料(450円)。夜は冷えるので寝具を厚めに。要予約。","t":1},{"n":"本栖湖キャンプ場","cat":"キャンプ場","area":"富士河口湖町","chk":true,"lat":35.4575,"lng":138.6007,"q":3,"wc":true,"h24":true,"free":false,"onsen":false,"m":"本栖湖畔の林間キャンプ場。トイレ・シャワー清潔で売店あり。混むと賑やか、早着で好みの場所を。車の横付け可否はサイト次第。","t":1},{"n":"精進湖キャンピングコテージ","cat":"キャンプ場・RVパーク","area":"富士河口湖町","chk":false,"lat":35.489,"lng":138.6025,"q":2,"wc":true,"h24":true,"free":false,"onsen":true,"m":"精進湖畔でキャンピングカーの車中泊もOK。富士山の眺めが抜群、焚き火可・犬可。近くに日帰り湯。予約不要で入れることも。","t":1},{"n":"山中湖みなみオートキャンプ場フリーサイト","cat":"オートキャンプ場","area":"山中湖村","chk":true,"lat":35.4208,"lng":138.9086,"q":3,"wc":true,"h24":true,"free":false,"onsen":true,"m":"空いていれば穴場。富士山ビューのフリーサイト。合宿所の大浴場が500円で使える。予約はなっぷのみ。","t":1},{"n":"富士見の丘オートキャンプ場","cat":"オートキャンプ場","area":"富士市","chk":false,"lat":35.2179,"lng":138.7025,"q":2,"wc":true,"h24":false,"free":false,"onsen":false,"m":"富士山と富士市街を望む。車中泊(キャンピングカー)可、暖房トイレ・熱いシャワー。朝8時前は出庫不可。GWは混雑。","t":1},{"n":"RVパーク ふじすその","cat":"RVパーク","area":"裾野市","chk":false,"lat":35.1858,"lng":138.9105,"q":3,"wc":true,"h24":true,"free":false,"onsen":false,"m":"道から奥まって静か、背後の小川の音が心地よい。トイレ・シャワーが新しく清潔。区画に傾斜ありレベラー用意。富士山ビュー。","t":1},{"n":"道の駅 飛騨街道なぎさ","cat":"道の駅","area":"高山市","chk":false,"lat":36.0064,"lng":137.2919,"q":2,"wc":true,"h24":true,"free":true,"onsen":false,"m":"渓谷の森に囲まれ川沿い。清潔でカフェが評判。高山方面の休憩・車中泊に。","t":1},{"n":"道の駅 ななもり清見","cat":"道の駅","area":"高山市","chk":false,"lat":36.1337,"lng":137.1669,"q":2,"wc":true,"h24":true,"free":true,"onsen":false,"m":"飛騨牛グルメと味噌ソフトが名物。高山ICに近く休憩しやすい大きめの道の駅。","t":1},{"n":"道の駅 飛騨あさひ","cat":"道の駅","area":"高山市","chk":false,"lat":36.0882,"lng":137.3511,"q":3,"wc":true,"h24":true,"free":true,"onsen":false,"m":"とても静かで落ち着ける道の駅。水曜定休。周辺は店が少ないので買い出しは早めに。","t":1},{"n":"モンデウス飛騨位山","cat":"休憩施設","area":"高山市","chk":true,"lat":36.0618,"lng":137.2265,"q":3,"wc":true,"h24":true,"free":true,"onsen":false,"m":"冬はスキー場になる高原の休憩施設。広大なドッグランがあり車中泊に使う人も。夜は静か。標高が高く冷える。宿泊可否は要確認。","t":1}];
+
+/* ---------- storage ---------- */
+const MYKEY='carcamp_myspots_v1', STKEY='carcamp_state_v1', LVKEY='carcamp_live_v1';
+function loadJSON(k,fb){try{const v=JSON.parse(localStorage.getItem(k)); return v==null?fb:v;}catch(e){return fb;}}
+function saveJSON(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){toast('保存できませんでした');}}
+let MY=loadJSON(MYKEY,[]);
+function saveMy(){saveJSON(MYKEY,MY);}
+let LIVE=[], liveTs=null, liveRestored=false;
+
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+const IC={
+  wc:'<svg viewBox="0 0 24 24"><path d="M6 3v18M18 3v18M6 8h12"/><circle cx="6" cy="5.5" r="1.4"/><circle cx="18" cy="5.5" r="1.4"/></svg>',
+  h24:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+  free:'<svg viewBox="0 0 24 24"><path d="M6 4l6 7 6-7M12 11v9M8 15h8M8 18h8"/></svg>',
+  onsen:'<svg viewBox="0 0 24 24"><path d="M8 14c-1 1.5-1 3 0 4M12 13c-1 1.7-1 3.3 0 5M16 14c-1 1.5-1 3 0 4M4 21h16"/></svg>',
+};
+const LABELS={wc:'トイレ',h24:'24時間',free:'無料',onsen:'温泉近く',quiet:'静か'};
+
+/* ---------- state ---------- */
+const ST=loadJSON(STKEY,{});
+let base=null, baseSrc=null;
+let filters={wc:false,h24:false,free:false,onsen:false,quiet:false};
+if(ST.filters) for(const k of Object.keys(filters)){ if(typeof ST.filters[k]==='boolean') filters[k]=ST.filters[k]; }
+let markers=new Map();           // id -> Leaflet marker（マップ全体で共通管理）
+let baseMarker=null, accCircle=null, tempMarker=null;
+let addMode=false, editing=null, selId=null;
+let watchId=null, lastGps=null, firstFix=false;
+
+function saveState(){saveJSON(STKEY,{filters, base, baseSrc, bigmap:document.body.classList.contains('bigmap')});}
+
+if(ST.bigmap) document.body.classList.add('bigmap');   // 地図生成前に適用（サイズ計測のずれ防止）
+const map=L.map('map',{zoomControl:true,attributionControl:true}).setView([36.4,138.2],7);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(map);
+
+function pinClass(s){
+  if(s.t===3) return 'my'; if(s.t===2) return 'live';
+  if(s.chk) return 'chk';
+  if(s.cat.includes('RVパーク')) return 'rv';
+  if(s.cat.includes('道の駅')) return 'michi';
+  if(s.free) return 'free'; return 'rv';
+}
+function mkIcon(cls){return L.divIcon({className:'',html:`<div class="pin ${cls}"></div>`,iconSize:[14,14],iconAnchor:[7,13]});}
+function addMarkerFor(id,s){
+  const cls=pinClass(s);
+  const m=L.marker([s.lat,s.lng],{icon:mkIcon(cls)}).addTo(map);
+  m._cls=cls;
+  m.on('click',e=>{L.DomEvent.stop(e); openSheet(id);});
+  markers.set(id,m);
+}
+SPOTS.forEach((s,i)=>addMarkerFor('s'+i,s));
+function redrawMy(){
+  [...markers.keys()].filter(k=>k[0]==='m').forEach(k=>{map.removeLayer(markers.get(k)); markers.delete(k);});
+  MY.forEach(s=>addMarkerFor('m'+s.id,s));
+}
+function drawLive(){
+  [...markers.keys()].filter(k=>k[0]==='l').forEach(k=>{map.removeLayer(markers.get(k)); markers.delete(k);});
+  LIVE.forEach((s,i)=>addMarkerFor('l'+i,s));
+}
+redrawMy();
+
+function selectMarker(id){
+  clearSel();
+  const m=markers.get(id); if(!m) return;
+  selId=id; m.setIcon(mkIcon(m._cls+' sel')); m.setZIndexOffset(1000);
+  map.panTo(m.getLatLng());
+}
+function clearSel(){
+  if(selId==null) return;
+  const m=markers.get(selId);
+  if(m){m.setIcon(mkIcon(m._cls)); m.setZIndexOffset(0);}
+  selId=null;
+}
+
+map.on('click',e=>{
+  if(addMode){ placePin(e.latlng.lat,e.latlng.lng); }
+  else {
+    stopWatch(true);
+    setBase(e.latlng.lat,e.latlng.lng,'tap');
+    toast('この地点を基準に並べ替えました（◎でGPSに戻る）');
+  }
+});
+
+/* ---------- geo utils ---------- */
+function dist(a,b){const R=6371,d=x=>x*Math.PI/180;
+  const dl=d(b.lat-a.lat),dn=d(b.lng-a.lng);
+  const h=Math.sin(dl/2)**2+Math.cos(d(a.lat))*Math.cos(d(b.lat))*Math.sin(dn/2)**2;
+  return 2*R*Math.asin(Math.sqrt(h));}
+function fmt(km){
+  if(km<1) return {v:Math.round(km*1000),u:'m'};
+  if(km<10) return {v:km.toFixed(1),u:'km'};
+  return {v:Math.round(km),u:'km'};
+}
+function bearingDeg(a,b){const d=x=>x*Math.PI/180,y=Math.sin(d(b.lng-a.lng))*Math.cos(d(b.lat));
+  const x=Math.cos(d(a.lat))*Math.sin(d(b.lat))-Math.sin(d(a.lat))*Math.cos(d(b.lat))*Math.cos(d(b.lng-a.lng));
+  return ((Math.atan2(y,x)*180/Math.PI)+360)%360;}
+function bearingTxt(deg){return ['北','北東','東','南東','南','南西','西','北西'][Math.round(deg/45)%8];}
+function band(d){
+  if(d<=1) return '~ 1 km ・歩ける';
+  if(d<=5) return '~ 5 km ・すぐ着く';
+  if(d<=15) return '~ 15 km ・車で30分圏';
+  if(d<=50) return '~ 50 km';
+  return '50 km ~';
+}
+
+function toast(msg){const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show');
+  clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove('show'),2800);}
+
+/* ---------- base / GPS ---------- */
+const SRC_LABEL={gps:'GPS', tap:'地図で指定', restored:'前回の基準点'};
+function setBase(lat,lng,src){
+  base={lat,lng}; baseSrc=src;
+  if(baseMarker) map.removeLayer(baseMarker);
+  const cls=src==='gps'?'me':'base';
+  baseMarker=L.marker([lat,lng],{icon:L.divIcon({className:'',html:`<div class="${cls}"></div>`,iconSize:[16,16],iconAnchor:[8,8]}),zIndexOffset:900}).addTo(map);
+  document.getElementById('statusMain').textContent=
+    src==='gps'?(watchId!=null?'現在地から近い順・追尾中':'現在地から近い順')
+    :src==='restored'?'前回の基準点から近い順':'基準点から近い順';
+  if(src!=='gps') document.getElementById('statusSrc').textContent=SRC_LABEL[src]||'';
+  saveState(); render();
+}
+function setStatusGps(acc){
+  document.getElementById('statusSrc').textContent='GPS ±'+Math.round(acc)+'m'+(watchId!=null?' ・追尾中':'');
+}
+function onFix(p){
+  const lat=p.coords.latitude, lng=p.coords.longitude, acc=p.coords.accuracy||0;
+  if(accCircle) map.removeLayer(accCircle);
+  if(acc>15) accCircle=L.circle([lat,lng],{radius:acc,color:'#5ab7ff',weight:1,fillColor:'#5ab7ff',fillOpacity:.07,interactive:false}).addTo(map);
+  const moved=!lastGps||dist(lastGps,{lat,lng})>0.03;   // 30m以上動いたときだけ再描画
+  lastGps={lat,lng};
+  if(!firstFix){firstFix=true; map.setView([lat,lng],Math.max(map.getZoom(),12));}
+  if(moved) setBase(lat,lng,'gps');
+  setStatusGps(acc);
+}
+function geoFail(){
+  document.getElementById('statusMain').textContent='現在地を取得できません';
+  document.getElementById('statusSrc').textContent='地図をタップで基準点指定';
+  render();
+}
+function locateOnce(initial){
+  const fab=document.getElementById('fab'); fab.classList.add('loading');
+  if(!navigator.geolocation){fab.classList.remove('loading'); geoFail(); return;}
+  const safety=setTimeout(()=>fab.classList.remove('loading'),20000);   // 許可ダイアログ放置でスピナーが回り続けない
+  navigator.geolocation.getCurrentPosition(
+    p=>{clearTimeout(safety); fab.classList.remove('loading'); firstFix=false; onFix(p);},
+    e=>{clearTimeout(safety); fab.classList.remove('loading'); if(initial&&!base) geoFail();},
+    {enableHighAccuracy:true,timeout:8000,maximumAge:60000});
+}
+function startWatch(){
+  const fab=document.getElementById('fab');
+  if(!navigator.geolocation){geoFail(); return;}
+  fab.classList.add('loading');
+  const safety=setTimeout(()=>fab.classList.remove('loading'),20000);
+  firstFix=false; lastGps=null;
+  watchId=navigator.geolocation.watchPosition(
+    p=>{clearTimeout(safety); fab.classList.remove('loading'); fab.classList.add('on'); onFix(p);},
+    e=>{clearTimeout(safety); fab.classList.remove('loading');
+      // 一時的な取得失敗(code 2/3)では追尾を止めない。拒否(code 1)のみ停止
+      if(e.code===1){ stopWatch(true); toast('位置情報が許可されていません'); }
+    },
+    {enableHighAccuracy:true,timeout:15000,maximumAge:5000});
+}
+function stopWatch(silent){
+  const fab=document.getElementById('fab');
+  if(watchId!=null){navigator.geolocation.clearWatch(watchId); watchId=null;}
+  fab.classList.remove('on','loading');
+  if(accCircle){map.removeLayer(accCircle); accCircle=null;}
+  if(baseSrc==='gps'){document.getElementById('statusMain').textContent='現在地から近い順';
+    const s=document.getElementById('statusSrc'); s.textContent=s.textContent.replace(' ・追尾中','');}
+  if(!silent) toast('現在地の追尾を停止しました');
+}
+document.getElementById('fab').addEventListener('click',()=>{
+  if(watchId!=null){ stopWatch(false); }
+  else { startWatch(); toast('現在地を追尾します（もう一度押すと停止）'); }
+});
+
+/* ---------- filters ---------- */
+function passFilter(s){
+  return Object.keys(filters).every(f=>{
+    if(!filters[f]) return true;
+    if(s.t===2) return false;                 // OSM候補は設備不明なのでフィルター中は除外
+    if(f==='quiet') return s.q>=3;
+    return !!s[f];
+  });
+}
+document.querySelectorAll('.chip').forEach(c=>{
+  const f=c.dataset.f;
+  c.setAttribute('aria-pressed',!!filters[f]);
+  c.addEventListener('click',()=>{filters[f]=!filters[f]; c.setAttribute('aria-pressed',filters[f]); saveState(); render();});
+});
+function updateChipCounts(){document.querySelectorAll('.chip').forEach(c=>{
+  const f=c.dataset.f, all=SPOTS.concat(MY);
+  c.querySelector('.cnt').textContent=(f==='quiet'?all.filter(s=>s.q>=3):all.filter(s=>s[f])).length;});}
+
+/* ---------- map controls ---------- */
+document.getElementById('expandBtn').addEventListener('click',()=>{
+  document.body.classList.toggle('bigmap'); saveState();
+  setTimeout(()=>map.invalidateSize(),240);
+});
+const legendBtn=document.getElementById('legendBtn'), legend=document.getElementById('legend');
+legendBtn.addEventListener('click',()=>{
+  const show=!legend.classList.contains('show');
+  legend.classList.toggle('show',show); legendBtn.setAttribute('aria-expanded',show);
+});
+
+/* ---------- ADD / EDIT ---------- */
+document.getElementById('addFab').addEventListener('click',()=>{ if(addMode) exitAdd(); else startAdd(); });
+document.getElementById('bnCancel').addEventListener('click',exitAdd);
+document.getElementById('bnCurrent').addEventListener('click',()=>{
+  if(!base){toast('先に現在地を取得してください'); return;} placePin(base.lat,base.lng);
+});
+function startAdd(){ editing=null; addMode=true;
+  document.getElementById('mapwrap').classList.add('adding');
+  document.getElementById('bannerTxt').innerHTML='<b>追加する場所</b>を地図でタップ';
+  document.getElementById('bnCurrent').textContent=(baseSrc==='gps')?'現在地を使う':'基準点を使う';
+  document.getElementById('bnCurrent').style.display='';
+  document.getElementById('banner').classList.add('show');
+}
+function startEdit(spot){ editing=spot; addMode=true;
+  document.getElementById('mapwrap').classList.add('adding');
+  placePin(spot.lat,spot.lng);
+}
+function exitAdd(){ addMode=false; editing=null;
+  document.getElementById('mapwrap').classList.remove('adding');
+  document.getElementById('banner').classList.remove('show');
+  if(tempMarker){map.removeLayer(tempMarker); tempMarker=null;}
+}
+function placePin(lat,lng){
+  if(tempMarker) map.removeLayer(tempMarker);
+  tempMarker=L.marker([lat,lng],{draggable:true,icon:L.divIcon({className:'',html:'<div class="pin temp"></div>',iconSize:[18,18],iconAnchor:[9,16]}),zIndexOffset:1200}).addTo(map);
+  map.setView([lat,lng], Math.max(map.getZoom(),14));
+  document.getElementById('banner').classList.remove('show');
+  openForm();
+}
+function openForm(){
+  const e=editing||{}; const q=e.q||2;
+  const tog=k=>e[k]?'true':'false';
+  document.getElementById('formBody').innerHTML=`
+    <div class="s-top"><div class="s-name">${editing?'スポットを編集':'スポットを追加'}</div>
+      <button class="s-close" id="fClose" aria-label="閉じる">×</button></div>
+    <div class="field"><label>名前</label><input type="text" id="fName" placeholder="例）〇〇漁港の駐車場" value="${esc(e.n||'')}"></div>
+    <div class="field"><label>種類（任意）</label><input type="text" id="fCat" placeholder="例）漁港・海沿い" value="${esc(e.cat||'')}"></div>
+    <div class="field"><label>エリア（任意）</label><input type="text" id="fArea" placeholder="例）〇〇市" value="${esc(e.area||'')}"></div>
+    <div class="field"><label>設備</label><div class="toggles" id="fTog">
+      <button class="tg" data-k="wc" aria-pressed="${tog('wc')}">トイレ</button>
+      <button class="tg" data-k="h24" aria-pressed="${tog('h24')}">24時間</button>
+      <button class="tg" data-k="free" aria-pressed="${tog('free')}">無料</button>
+      <button class="tg" data-k="onsen" aria-pressed="${tog('onsen')}">温泉近く</button>
+    </div></div>
+    <div class="field"><label>静けさ</label><div class="qsel" id="fQ">
+      <button class="qbtn" data-q="1" aria-pressed="${q===1}">騒がしめ</button>
+      <button class="qbtn" data-q="2" aria-pressed="${q===2}">ふつう</button>
+      <button class="qbtn" data-q="3" aria-pressed="${q===3}">静か</button>
+    </div></div>
+    <div class="field"><label>メモ</label><textarea id="fMemo" placeholder="夜の雰囲気、トイレの場所、コンビニまでの距離など">${esc(e.m||'')}</textarea></div>
+    <div class="poshint">位置は地図の緑のピンをドラッグして微調整できます。</div>
+    <div class="actions">
+      <button class="btn go" id="fSave" style="background:var(--mine);border-color:var(--mine);color:#08210f">保存する</button>
+      <button class="btn map" id="fCancel">キャンセル</button>
+    </div>`;
+  openSheetEl(document.getElementById('formSheet'));
+  document.getElementById('fTog').querySelectorAll('.tg').forEach(b=>b.addEventListener('click',()=>{
+    b.setAttribute('aria-pressed', b.getAttribute('aria-pressed')!=='true');}));
+  document.getElementById('fQ').querySelectorAll('.qbtn').forEach(b=>b.addEventListener('click',()=>{
+    document.getElementById('fQ').querySelectorAll('.qbtn').forEach(x=>x.setAttribute('aria-pressed','false'));
+    b.setAttribute('aria-pressed','true');}));
+  document.getElementById('fClose').onclick=cancelForm;
+  document.getElementById('fCancel').onclick=cancelForm;
+  document.getElementById('fSave').onclick=saveForm;
+  document.getElementById('fName').focus();
+}
+function formDirty(){
+  const g=id=>{const el=document.getElementById(id); return el?el.value.trim():null;};
+  const n=g('fName'), m=g('fMemo'), c=g('fCat'), a=g('fArea');
+  if(n==null) return false;
+  if(editing) return n!==editing.n || m!==(editing.m||'') || c!==(editing.cat||'') || a!==(editing.area||'');
+  return !!(n||m||c||a);
+}
+function cancelForm(){
+  if(formDirty() && !confirm('入力内容を破棄しますか？')) return;
+  document.getElementById('formSheet').classList.remove('open'); closeScrimIfIdle(); exitAdd(); restoreFocus();
+}
+function saveForm(){
+  const name=document.getElementById('fName').value.trim();
+  if(!name){toast('名前を入れてください'); return;}
+  const pos=tempMarker?tempMarker.getLatLng():(editing?{lat:editing.lat,lng:editing.lng}:base);
+  if(!pos){toast('位置を指定してください'); return;}
+  const tg={}; document.getElementById('fTog').querySelectorAll('.tg').forEach(b=>tg[b.dataset.k]=b.getAttribute('aria-pressed')==='true');
+  let q=2; const qa=document.getElementById('fQ').querySelector('.qbtn[aria-pressed="true"]'); if(qa) q=+qa.dataset.q;
+  const obj={ id: editing?editing.id:('u'+Date.now().toString(36)), t:3, chk:false,
+    n:name, cat:document.getElementById('fCat').value.trim()||'自分のスポット',
+    area:document.getElementById('fArea').value.trim()||'',
+    lat:pos.lat, lng:pos.lng, q, wc:!!tg.wc, h24:!!tg.h24, free:!!tg.free, onsen:!!tg.onsen,
+    m:document.getElementById('fMemo').value.trim() };
+  if(editing) MY=MY.map(x=>x.id===editing.id?obj:x); else MY.push(obj);
+  saveMy(); redrawMy(); updateChipCounts();
+  document.getElementById('formSheet').classList.remove('open'); closeScrimIfIdle(); exitAdd(); restoreFocus();
+  toast(editing?'更新しました':'追加しました'); render();
+}
+function deleteSpot(spot){
+  if(!confirm('「'+spot.n+'」を削除しますか？')) return;
+  MY=MY.filter(x=>x.id!==spot.id); saveMy(); redrawMy(); updateChipCounts();
+  closeSheet(); toast('削除しました'); render();
+}
+
+/* ---------- DATA export/import ---------- */
+function openData(){
+  document.getElementById('dataBody').innerHTML=`
+    <div class="s-top"><div class="s-name">自分のスポットのバックアップ</div>
+      <button class="s-close" id="dClose" aria-label="閉じる">×</button></div>
+    <div class="note cand">端末やURLを変えても引き継げます。「書き出す」でコピー/ファイル保存、別の端末では貼り付けかファイル選択で「読み込む」。読み込みは上書きではなく統合されます。</div>
+    <div class="field"><label>データ（JSON）</label><textarea id="dArea" style="min-height:120px" placeholder="ここに書き出し内容が入ります"></textarea></div>
+    <div class="actions">
+      <button class="btn go sm" id="dExport">書き出してコピー</button>
+      <button class="btn map sm" id="dSaveFile">ファイルに保存</button>
+    </div>
+    <div class="actions" style="margin-top:10px">
+      <button class="btn map sm" id="dImport">この内容を読み込む</button>
+      <button class="btn map sm" id="dLoadFile">ファイルから読み込む</button>
+    </div>
+    <input type="file" id="dFile" accept=".json,application/json" hidden>`;
+  openSheetEl(document.getElementById('dataSheet'));
+  const area=document.getElementById('dArea');
+  document.getElementById('dClose').onclick=closeData;
+  document.getElementById('dExport').onclick=async()=>{
+    area.value=JSON.stringify(MY);
+    try{ await navigator.clipboard.writeText(area.value); toast('クリップボードにコピーしました'); }
+    catch(e){ area.select(); try{document.execCommand('copy'); toast('コピーしました');}catch(e2){toast('書き出しました。長押しでコピーしてください');} }
+  };
+  document.getElementById('dSaveFile').onclick=()=>{
+    const blob=new Blob([JSON.stringify(MY,null,1)],{type:'application/json'});
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+    a.download='car-camp-spots.json'; a.click(); URL.revokeObjectURL(a.href);
+    toast('ファイルに保存しました');
+  };
+  function importText(txt){
+    try{ const arr=JSON.parse(txt);
+      if(!Array.isArray(arr)) throw 0;
+      const byId={}; MY.forEach(s=>byId[s.id]=s);
+      arr.forEach(s=>{ if(s&&s.n&&s.lat!=null&&s.lng!=null){
+        s.t=3; if(!s.id) s.id='u'+Math.random().toString(36).slice(2);
+        s.q=(s.q>=1&&s.q<=3)?s.q:2; s.cat=s.cat||'自分のスポット'; s.area=s.area||''; s.m=s.m||'';
+        s.chk=!!s.chk; ['wc','h24','free','onsen'].forEach(k=>s[k]=!!s[k]);
+        byId[s.id]=s; } });
+      MY=Object.values(byId); saveMy(); redrawMy(); updateChipCounts(); render();
+      closeData(); toast('読み込みました（自分のスポット '+MY.length+'件）');
+    }catch(err){ toast('読み込めませんでした。JSONを確認してください'); }
+  }
+  document.getElementById('dImport').onclick=()=>importText(area.value);
+  document.getElementById('dLoadFile').onclick=()=>document.getElementById('dFile').click();
+  document.getElementById('dFile').onchange=e=>{
+    const f=e.target.files[0]; if(!f) return;
+    const r=new FileReader(); r.onload=()=>importText(r.result); r.readAsText(f);
+  };
+}
+function closeData(){ document.getElementById('dataSheet').classList.remove('open'); closeScrimIfIdle(); restoreFocus(); }
+
+/* ---------- LIVE SEARCH ---------- */
+const OVERPASS=['https://overpass-api.de/api/interpreter','https://overpass.kumi.systems/api/interpreter'];
+async function liveSearch(){
+  const btn=document.getElementById('liveMapBtn');
+  const c=map.getCenter();
+  // 検索半径は表示中の地図範囲から自動決定（3〜30km）
+  const ne=map.getBounds().getNorthEast();
+  const R=Math.round(Math.min(30, Math.max(3, dist({lat:c.lat,lng:c.lng},{lat:ne.lat,lng:ne.lng})))*1000);
+  if(!base){ setBase(c.lat,c.lng,'tap'); toast('地図の中心を基準点にしました'); }
+  else if(!loadJSON('carcamp_liveinfo_v1',false)){ saveJSON('carcamp_liveinfo_v1',true);
+    toast('表示中の地図の範囲からOSMの候補を探します（設備・可否は未確認）'); }
+  btn.disabled=true; btn.classList.add('on');
+  const q=`[out:json][timeout:25];(`
+    +`nwr["tourism"="caravan_site"](around:${R},${c.lat},${c.lng});`
+    +`nwr["tourism"="camp_site"](around:${R},${c.lat},${c.lng});`
+    +`nwr["highway"="rest_area"](around:${R},${c.lat},${c.lng});`
+    +`nwr["highway"="services"](around:${R},${c.lat},${c.lng});`
+    +`nwr["name"~"道の駅"](around:${R},${c.lat},${c.lng});`
+    +`nwr["name"~"RVパーク|オートキャンプ|キャンプ場"](around:${R},${c.lat},${c.lng});`
+    +`);out center 80;`;
+  let j=null, lastErr=null;
+  for(const ep of OVERPASS){
+    // 1系統目は短めに切って早くフォールバックする
+    const ctl=new AbortController(); const tm=setTimeout(()=>ctl.abort(), ep===OVERPASS[0]?12000:20000);
+    try{
+      const res=await fetch(ep,{method:'POST',body:'data='+encodeURIComponent(q),signal:ctl.signal});
+      clearTimeout(tm);
+      if(!res.ok) throw new Error('http '+res.status);
+      j=await res.json(); break;
+    }catch(err){ clearTimeout(tm); lastErr=err; }
+  }
+  btn.disabled=false; btn.classList.remove('on');
+  if(!j){ toast('ライブ検索に失敗しました。通信環境を確認して再試行してください'); return; }
+  const seen=new Set();
+  const known=SPOTS.concat(MY).map(s=>({lat:s.lat,lng:s.lng}));
+  LIVE=[];
+  for(const el of j.elements){
+    const lat=el.lat??el.center?.lat, lng=el.lon??el.center?.lon; if(lat==null||lng==null) continue;
+    const nm=(el.tags&&(el.tags.name||el.tags['name:ja']))||'(名称なし)';
+    const key=nm+Math.round(lat*1000)+Math.round(lng*1000); if(seen.has(key)) continue; seen.add(key);
+    if(known.some(k=>dist(k,{lat,lng})<0.18)) continue;
+    let cat='候補地'; const t=el.tags||{};
+    if(t.tourism==='caravan_site') cat='RVパーク/キャラバン';
+    else if(t.tourism==='camp_site'||/キャンプ場|オートキャンプ/.test(nm)) cat='キャンプ場';
+    else if(t.highway==='rest_area'||t.highway==='services') cat='SA/PA・休憩所';
+    if(/道の駅/.test(nm)) cat='道の駅'; else if(/RVパーク/.test(nm)) cat='RVパーク';
+    LIVE.push({n:nm,cat,area:'',lat,lng,t:2,m:''});
+  }
+  liveTs=Date.now(); liveRestored=false;
+  if(LIVE.length) saveJSON(LVKEY,{ts:liveTs,results:LIVE});   // 0件で前回キャッシュを潰さない
+  toast(LIVE.length?`OSMから ${LIVE.length}件の候補（紫のピン・未確認）`:'この範囲では新しい候補が見つかりませんでした');
+  drawLive(); render();
+}
+document.getElementById('liveMapBtn').addEventListener('click',liveSearch);
+// 前回のライブ検索結果を復元（オフラインでも直近の候補が見える）。24時間で失効
+(function(){
+  const cache=loadJSON(LVKEY,null);
+  if(!(cache&&Array.isArray(cache.results)&&cache.results.length)) return;
+  if(Date.now()-cache.ts>86400000){ try{localStorage.removeItem(LVKEY)}catch(e){} return; }
+  LIVE=cache.results; liveTs=cache.ts; liveRestored=true; drawLive();
+})();
+
+/* ---------- RENDER ---------- */
+function allSpots(){ return SPOTS.map((s,i)=>({s,id:'s'+i}))
+  .concat(MY.map(s=>({s,id:'m'+s.id})))
+  .concat(LIVE.map((s,i)=>({s,id:'l'+i}))); }
+
+function syncMap(visible){
+  markers.forEach((m,id)=>{
+    if(visible.has(id)){ if(!map.hasLayer(m)) m.addTo(map); }
+    else { if(map.hasLayer(m)) map.removeLayer(m); }
+  });
+}
+
+function cardHTML(s,id,d){
+  let distCol='';
+  if(d!=null){
+    const f=fmt(d), deg=bearingDeg(base,s);
+    distCol=`<div class="dist"><span class="v">${f.v}</span><span class="u">${f.u}</span>
+      <span class="u dir"><span class="arw" style="transform:rotate(${Math.round(deg)}deg)">↑</span>${bearingTxt(deg)}</span></div>`;
+  }
+  if(s.t===2){ return `<button class="card live" data-id="${id}">${distCol}
+    <div class="body"><div class="name">${esc(s.n)}</div>
+      <div class="meta"><span>${esc(s.cat)}</span><span class="tag live">OSM候補</span></div>
+      <div class="livemeta">地図データから自動取得。設備・車中泊可否は未確認です。</div></div></button>`; }
+  const amen=['wc','h24','free','onsen'].map(k=>`<span class="i ${s[k]?'on':''}">${IC[k]}</span>`).join('');
+  const dots=[1,2,3].map(n=>`<span class="dot ${n<=s.q?'f':''}"></span>`).join('');
+  const tag=s.chk?'<span class="tag chk">要確認</span>':(s.t===3?'<span class="tag my">自分の</span>':(s.t===1?'<span class="tag cand">候補</span>':''));
+  const cls=s.t===3?'card my':'card';
+  return `<button class="${cls}" data-id="${id}">${distCol}
+    <div class="body"><div class="name">${esc(s.n)}</div>
+      <div class="meta"><span>${esc(s.cat)}</span>${s.area?'<span>·</span><span>'+esc(s.area)+'</span>':''}${tag}</div>
+      <div class="amen">${amen}<span class="quiet">静けさ<span class="dots">${dots}</span></span></div></div></button>`;
+}
+
+function render(){
+  const list=document.getElementById('list');
+  const st=list.scrollTop;
+  const anyFilter=Object.values(filters).some(v=>v);
+  let rows=allSpots().filter(({s})=>passFilter(s));
+  syncMap(new Set(rows.map(r=>r.id)));
+
+  const foot=`<div class="myfoot">自分の追加 <b>${MY.length}</b>件 · <button class="linkbtn" id="dataBtn">書き出し / 読み込み</button></div>`;
+  let notice='';
+  if(anyFilter&&LIVE.length) notice+=`<div class="notice">OSM候補 ${LIVE.length}件は設備が未確認のため、フィルター中は表示していません。</div>`;
+  else if(liveRestored&&LIVE.length&&liveTs){
+    const min=Math.round((Date.now()-liveTs)/60000);
+    const age=min<1?'たった今':min<60?min+'分前':Math.round(min/60)+'時間前';
+    notice+=`<div class="notice">前回のライブ検索結果 ${LIVE.length}件を表示中（${age}）。「このあたりを検索」で更新できます。</div>`;
+  }
+
+  if(!base){ list.innerHTML=`<div class="hint">右下の<b> ◎ </b>で現在地を取得できます。<br>取れないときは<b>地図をタップ</b>すると、その地点から近い順に並びます。<br><br>釣り場に立ったまま開けば、そこから一番近い泊まり場が上に出ます。</div>`+foot;
+    document.getElementById('dataBtn').onclick=openData; return; }
+  if(!rows.length){ list.innerHTML=notice+`<div class="hint">条件に合う場所がありません。<br>フィルターを外してみてください。</div>`+foot;
+    document.getElementById('dataBtn').onclick=openData; return; }
+
+  rows.forEach(r=>r.d=dist(base,r.s)); rows.sort((a,b)=>a.d-b.d);
+  let html=notice, lastBand=null;
+  rows.forEach(({s,id,d})=>{
+    const b=band(d);
+    if(b!==lastBand){ html+=`<div class="bandhead">${b}</div>`; lastBand=b; }
+    html+=cardHTML(s,id,d);
+  });
+  list.innerHTML=html+foot;
+  list.querySelectorAll('.card').forEach(c=>c.addEventListener('click',()=>openSheet(c.dataset.id)));
+  document.getElementById('dataBtn').onclick=openData;
+  list.scrollTop=st;
+}
+
+/* ---------- DETAIL ---------- */
+const scrim=document.getElementById('scrim'), sheet=document.getElementById('sheet');
+let lastFocus=null;
+function openSheetEl(el){
+  lastFocus=document.activeElement;
+  scrim.classList.add('open'); el.classList.add('open');
+  const c=el.querySelector('.s-close'); if(c) c.focus();
+}
+function restoreFocus(){ if(lastFocus&&lastFocus.focus){try{lastFocus.focus()}catch(e){}} lastFocus=null; }
+function getSpot(id){ if(id[0]==='s') return SPOTS[+id.slice(1)]; if(id[0]==='l') return LIVE[+id.slice(1)]; return MY.find(x=>x.id===id.slice(1)); }
+function openSheet(id){
+  const s=getSpot(id); if(!s) return;
+  selectMarker(id);
+  const dhtml= base ? (()=>{const f=fmt(dist(base,s)); return `<span class="v">${f.v}</span><span class="u">${f.u}</span><span class="sep">/</span><span class="cat">${bearingTxt(bearingDeg(base,s))}の方向</span>`;})()
+    : `<span class="cat">距離は現在地取得後に表示</span>`;
+  let mid='';
+  if(s.t===2){
+    mid=`<div class="meta" style="margin-top:2px">${esc(s.cat)} <span class="tag live">OSM候補</span></div>
+      <div class="note live">地図データ(OpenStreetMap)から自動で拾った候補です。トイレ・料金・車中泊の可否は未確認。現地の看板やGoogleの口コミで必ず確認してください。</div>`;
+  }else{
+    const amen=[['wc','夜も使えるトイレ','トイレなし'],['h24','24時間 出入り可',''],['free','駐車 無料','駐車 有料/要確認'],['onsen','温泉が近い','']]
+      .map(([k,on,off])=>`<div class="i ${s[k]?'on':''}">${IC[k]}<span>${s[k]?on:(off||LABELS[k]+'なし')}</span></div>`).join('');
+    const dots=[1,2,3].map(n=>`<span class="dot ${n<=s.q?'f':''}"></span>`).join('');
+    const qtxt=['—','夜は少し騒がしめ','ふつう','とても静か'][s.q]||'—';
+    const note = s.chk?`<div class="note warn">本来は車中泊向けの場所ではない、または予約・確認が要る場所です。可否は現地の看板や施設に確認を。夜は静かに、長時間の滞在は控えめに。</div>`
+      : (s.t===3?`<div class="note cand" style="background:var(--mine-dim);border-color:#2f5a3e;color:#bff0cb">自分で追加したスポットです。編集・削除できます。</div>`
+      : (s.t===1?`<div class="note cand">自動で追加した候補です。設備は口コミ情報からの推定なので、現地で確認してください。</div>`:''));
+    mid=`<div class="meta" style="margin-top:2px">${esc(s.cat)}${s.area?' · '+esc(s.area):''}${s.chk?' <span class="tag chk">要確認</span>':''}</div>
+      ${note}<div class="s-amen">${amen}</div>
+      <div class="s-quiet">静けさ <span class="dots">${dots}</span> <span style="color:var(--muted)">${qtxt}</span></div>
+      ${s.m?`<div class="memo">${esc(s.m)}</div>`:''}`;
+  }
+  const dirUrl=`https://www.google.com/maps/dir/?api=1&destination=${s.lat},${s.lng}`;
+  const viewUrl=(s.n&&s.n!=='(名称なし)')?`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(s.n+' '+(s.area||''))}`:`https://www.google.com/maps/search/?api=1&query=${s.lat},${s.lng}`;
+  const editRow = s.t===3 ? `<div class="actions" style="margin-top:10px">
+      <button class="btn sm edit" id="sEdit">編集</button>
+      <button class="btn sm del" id="sDel">削除</button></div>` : '';
+  document.getElementById('sheetBody').innerHTML=`
+    <div class="s-top"><div class="s-name">${esc(s.n)}</div><button class="s-close" id="sClose" aria-label="閉じる">×</button></div>
+    <div class="s-dist">${dhtml}</div>${mid}
+    <div class="actions">
+      <a class="btn go" href="${dirUrl}" target="_blank" rel="noopener"><svg viewBox="0 0 24 24"><path d="M12 21s-7-6-7-11a7 7 0 0114 0c0 5-7 11-7 11z"/><circle cx="12" cy="10" r="2.4"/></svg>経路案内</a>
+      <a class="btn map" href="${viewUrl}" target="_blank" rel="noopener"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/></svg>地図で見る</a>
+    </div>${editRow}`;
+  openSheetEl(sheet);
+  document.getElementById('sClose').onclick=closeSheet;
+  if(s.t===3){
+    document.getElementById('sEdit').onclick=()=>{ closeSheet(); startEdit(s); };
+    document.getElementById('sDel').onclick=()=>deleteSpot(s);
+  }
+}
+function closeSheet(){ sheet.classList.remove('open'); closeScrimIfIdle(); clearSel(); restoreFocus(); }
+function closeScrimIfIdle(){
+  const anyOpen=['sheet','formSheet','dataSheet'].some(id=>document.getElementById(id).classList.contains('open'));
+  if(!anyOpen) scrim.classList.remove('open');
+}
+function closeTopmost(){
+  const form=document.getElementById('formSheet');
+  if(form.classList.contains('open')){ cancelForm(); return; }
+  if(sheet.classList.contains('open')){ closeSheet(); return; }
+  const data=document.getElementById('dataSheet');
+  if(data.classList.contains('open')){ closeData(); return; }
+  if(addMode) exitAdd();
+}
+scrim.addEventListener('click',closeTopmost);
+document.addEventListener('keydown',e=>{if(e.key==='Escape') closeTopmost();});
+
+/* 下スワイプでシートを閉じる */
+function enableSwipe(el, closeFn){
+  let sy=null, dy=0, drag=false;
+  const reset=()=>{el.style.transition=''; el.style.transform='';};
+  el.addEventListener('touchstart',e=>{
+    if(el.scrollTop>4) return;
+    sy=e.touches[0].clientY; dy=0; drag=true; el.style.transition='none';
+  },{passive:true});
+  el.addEventListener('touchmove',e=>{
+    if(!drag) return;
+    if(el.scrollTop>0){ drag=false; reset(); return; }   // 中身のスクロールに切り替わったら追従をやめる
+    dy=e.touches[0].clientY-sy;
+    el.style.transform = dy>0 ? `translateY(${dy}px)` : '';
+  },{passive:true});
+  el.addEventListener('touchend',()=>{
+    if(!drag) return; drag=false; reset();
+    if(dy>90) closeFn();
+  });
+  el.addEventListener('touchcancel',()=>{ if(drag){drag=false; reset();} });
+}
+enableSwipe(sheet, closeSheet);
+enableSwipe(document.getElementById('formSheet'), cancelForm);
+enableSwipe(document.getElementById('dataSheet'), closeData);
+
+/* ---------- boot ---------- */
+if(ST.base&&ST.base.lat!=null){ setBase(ST.base.lat, ST.base.lng, 'restored'); map.setView([ST.base.lat,ST.base.lng],10); }
+updateChipCounts(); render(); locateOnce(true);
+</script>
+</body>
+</html>
