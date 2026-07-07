@@ -603,7 +603,20 @@ function openData(){
 function closeData(){ document.getElementById('dataSheet').classList.remove('open'); closeScrimIfIdle(); restoreFocus(); }
 
 /* ---------- LIVE SEARCH ---------- */
-const OVERPASS=['https://overpass-api.de/api/interpreter','https://overpass.kumi.systems/api/interpreter'];
+const OVERPASS=['https://overpass-api.de/api/interpreter','https://overpass.kumi.systems/api/interpreter','https://overpass.private.coffee/api/interpreter'];
+async function overpassFetch(q){
+  for(const ep of OVERPASS){
+    // 1系統目は短めに切って早くフォールバックする
+    const ctl=new AbortController(); const tm=setTimeout(()=>ctl.abort(), ep===OVERPASS[0]?12000:20000);
+    try{
+      const res=await fetch(ep,{method:'POST',body:'data='+encodeURIComponent(q),signal:ctl.signal});
+      clearTimeout(tm);
+      if(!res.ok) throw new Error('http '+res.status);
+      return await res.json();
+    }catch(err){ clearTimeout(tm); }
+  }
+  return null;
+}
 async function liveSearch(){
   const btn=document.getElementById('liveMapBtn');
   const c=map.getCenter();
@@ -614,31 +627,27 @@ async function liveSearch(){
   else if(!loadJSON('carcamp_liveinfo_v1',false)){ saveJSON('carcamp_liveinfo_v1',true);
     toast('表示中の地図の範囲からOSMの候補を探します（設備・可否は未確認）'); }
   btn.disabled=true; btn.classList.add('on');
-  const q=`[out:json][timeout:25];(`
-    +`nwr["tourism"="caravan_site"](around:${R},${c.lat},${c.lng});`
-    +`nwr["tourism"="camp_site"](around:${R},${c.lat},${c.lng});`
-    +`nwr["highway"="rest_area"](around:${R},${c.lat},${c.lng});`
-    +`nwr["highway"="services"](around:${R},${c.lat},${c.lng});`
-    +`nwr["name"~"道の駅"](around:${R},${c.lat},${c.lng});`
-    +`nwr["name"~"RVパーク|オートキャンプ|キャンプ場"](around:${R},${c.lat},${c.lng});`
+  const around=`(around:${R},${c.lat},${c.lng})`;
+  // タグ検索は軽くて確実。名前の正規表現検索はOverpassに重く5xxになりやすいので、
+  // 補助扱いにして失敗しても無視する
+  const tagQ=`[out:json][timeout:25];(`
+    +`nwr["tourism"="caravan_site"]${around};`
+    +`nwr["tourism"="camp_site"]${around};`
+    +`nwr["highway"="rest_area"]${around};`
+    +`nwr["highway"="services"]${around};`
     +`);out center 80;`;
-  let j=null, lastErr=null;
-  for(const ep of OVERPASS){
-    // 1系統目は短めに切って早くフォールバックする
-    const ctl=new AbortController(); const tm=setTimeout(()=>ctl.abort(), ep===OVERPASS[0]?12000:20000);
-    try{
-      const res=await fetch(ep,{method:'POST',body:'data='+encodeURIComponent(q),signal:ctl.signal});
-      clearTimeout(tm);
-      if(!res.ok) throw new Error('http '+res.status);
-      j=await res.json(); break;
-    }catch(err){ clearTimeout(tm); lastErr=err; }
-  }
+  const nameQ=`[out:json][timeout:25];(`
+    +`nwr["name"~"道の駅"]${around};`
+    +`nwr["name"~"RVパーク|オートキャンプ|キャンプ場"]${around};`
+    +`);out center 80;`;
+  const [tagJ,nameJ]=await Promise.all([overpassFetch(tagQ),overpassFetch(nameQ)]);
   btn.disabled=false; btn.classList.remove('on');
-  if(!j){ toast('ライブ検索に失敗しました。通信環境を確認して再試行してください'); return; }
+  if(!tagJ&&!nameJ){ toast('ライブ検索に失敗しました（検索サーバー混雑）。時間をおいて再試行してください'); return; }
   const seen=new Set();
   const known=SPOTS.concat(MY).map(s=>({lat:s.lat,lng:s.lng}));
   LIVE=[];
-  for(const el of j.elements){
+  const elements=(tagJ?tagJ.elements:[]).concat(nameJ?nameJ.elements:[]);
+  for(const el of elements){
     const lat=el.lat??el.center?.lat, lng=el.lon??el.center?.lon; if(lat==null||lng==null) continue;
     const nm=(el.tags&&(el.tags.name||el.tags['name:ja']))||'(名称なし)';
     const key=nm+Math.round(lat*1000)+Math.round(lng*1000); if(seen.has(key)) continue; seen.add(key);
