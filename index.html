@@ -77,6 +77,9 @@ body.bigmap #mapwrap{height:58dvh}
 .pin.rv{background:var(--moon)} .pin.michi{background:#9ec7ff}
 .pin.free{background:#a9d98a} .pin.chk{background:var(--warn)} .pin.live{background:var(--live)} .pin.my{background:var(--mine)}
 .pin.sel{transform:rotate(-45deg) scale(1.5); box-shadow:0 0 0 5px rgba(234,241,238,.22), 0 0 12px 2px rgba(244,183,64,.5)}
+.pin.near{background:var(--amber); animation:beat 1.8s ease-in-out infinite}
+@keyframes beat{0%,100%{box-shadow:0 0 0 4px var(--amber-dim),0 0 10px 1px rgba(244,183,64,.45)}
+  50%{box-shadow:0 0 0 8px rgba(244,183,64,.05),0 0 16px 3px rgba(244,183,64,.75)}}
 .pin.temp{background:var(--mine); width:18px;height:18px; box-shadow:0 0 0 6px var(--mine-dim)}
 .me{width:16px;height:16px;border-radius:50%;background:#5ab7ff;border:2px solid #eaf6ff;box-shadow:0 0 0 6px rgba(90,183,255,.18)}
 .base{width:18px;height:18px;border-radius:50%;background:transparent;border:2px dashed var(--amber);box-shadow:0 0 0 5px var(--amber-dim)}
@@ -306,17 +309,26 @@ function drawLive(){
 }
 redrawMy();
 
+function iconCls(id,m){ return m._cls+(id===nearId?' near':'')+(id===selId?' sel':''); }
 function selectMarker(id){
   clearSel();
   const m=markers.get(id); if(!m) return;
-  selId=id; m.setIcon(mkIcon(m._cls+' sel')); m.setZIndexOffset(1000);
+  selId=id; m.setIcon(mkIcon(iconCls(id,m))); m.setZIndexOffset(1000);
   map.panTo(m.getLatLng());
 }
 function clearSel(){
   if(selId==null) return;
-  const m=markers.get(selId);
-  if(m){m.setIcon(mkIcon(m._cls)); m.setZIndexOffset(0);}
-  selId=null;
+  const m=markers.get(selId), id=selId; selId=null;
+  if(m){m.setIcon(mkIcon(iconCls(id,m))); m.setZIndexOffset(0);}
+}
+// 最寄りの1件（t=2以外）を琥珀色の点滅ピンにする
+let nearId=null;
+function markNearest(id){
+  if(nearId===id) return;
+  const prevId=nearId, prev=markers.get(prevId); nearId=id;
+  if(prev) prev.setIcon(mkIcon(iconCls(prevId,prev)));
+  const m=markers.get(id);
+  if(m) m.setIcon(mkIcon(iconCls(id,m)));
 }
 
 map.on('click',e=>{
@@ -617,6 +629,21 @@ async function overpassFetch(q){
   }
   return null;
 }
+// ライブ検索の品質ルール（SPEC 4.6）
+// 名前・タグで明確に除外するもの（墓地・宗教施設・私有地など）
+const BAD_NAME=/墓地|霊園|斎場|火葬|葬祭|葬儀|寺院|神社|仏閣|お墓|納骨/;
+const badTag=t=>t.landuse==='cemetery'||t.amenity==='grave_yard'||t.amenity==='place_of_worship'
+  ||t.amenity==='funeral_hall'||t.historic!=null||t.access==='private'||t.access==='no';
+// 種別ホワイトリスト（該当しなければ候補にしない＝ゴミ除け）
+function classify(t,nm){
+  if(/道の駅/.test(nm)) return '道の駅';
+  if(t.highway==='services') return 'SA・PA';
+  if(t.highway==='rest_area') return '休憩所・PA';
+  if(t.tourism==='caravan_site'||/ＲＶパーク|RVパーク/.test(nm)) return 'RVパーク';
+  if(t.tourism==='camp_site'||/オートキャンプ|キャンプ場|野営場/.test(nm)) return 'キャンプ場';
+  if(/車中泊/.test(nm)) return '車中泊スポット';
+  return null;
+}
 async function liveSearch(){
   const btn=document.getElementById('liveMapBtn');
   const c=map.getCenter();
@@ -635,33 +662,31 @@ async function liveSearch(){
     +`nwr["tourism"="camp_site"]${around};`
     +`nwr["highway"="rest_area"]${around};`
     +`nwr["highway"="services"]${around};`
-    +`);out center 80;`;
+    +`);out center 120;`;
   const nameQ=`[out:json][timeout:25];(`
     +`nwr["name"~"道の駅"]${around};`
-    +`nwr["name"~"RVパーク|オートキャンプ|キャンプ場"]${around};`
-    +`);out center 80;`;
+    +`nwr["name"~"ＲＶパーク|RVパーク|オートキャンプ|キャンプ場|野営場|車中泊"]${around};`
+    +`);out center 120;`;
   const [tagJ,nameJ]=await Promise.all([overpassFetch(tagQ),overpassFetch(nameQ)]);
   btn.disabled=false; btn.classList.remove('on');
   if(!tagJ&&!nameJ){ toast('ライブ検索に失敗しました（検索サーバー混雑）。時間をおいて再試行してください'); return; }
   const seen=new Set();
   const known=SPOTS.concat(MY).map(s=>({lat:s.lat,lng:s.lng}));
-  LIVE=[];
+  LIVE=[]; let dropped=0;
   const elements=(tagJ?tagJ.elements:[]).concat(nameJ?nameJ.elements:[]);
   for(const el of elements){
     const lat=el.lat??el.center?.lat, lng=el.lon??el.center?.lon; if(lat==null||lng==null) continue;
-    const nm=(el.tags&&(el.tags.name||el.tags['name:ja']))||'(名称なし)';
+    const t=el.tags||{}; const nm=(t.name||t['name:ja'])||'';
+    if(!nm) continue;                                          // 名前なしは判断できないので除外
+    if(BAD_NAME.test(nm)||badTag(t)){ dropped++; continue; }   // 墓地・宗教施設・私有地を除外
+    const cat=classify(t,nm); if(!cat){ dropped++; continue; } // 種別ホワイトリストに該当しないものは採用しない
     const key=nm+Math.round(lat*1000)+Math.round(lng*1000); if(seen.has(key)) continue; seen.add(key);
     if(known.some(k=>dist(k,{lat,lng})<0.18)) continue;
-    let cat='候補地'; const t=el.tags||{};
-    if(t.tourism==='caravan_site') cat='RVパーク/キャラバン';
-    else if(t.tourism==='camp_site'||/キャンプ場|オートキャンプ/.test(nm)) cat='キャンプ場';
-    else if(t.highway==='rest_area'||t.highway==='services') cat='SA/PA・休憩所';
-    if(/道の駅/.test(nm)) cat='道の駅'; else if(/RVパーク/.test(nm)) cat='RVパーク';
     LIVE.push({n:nm,cat,area:'',lat,lng,t:2,m:''});
   }
   liveTs=Date.now(); liveRestored=false;
   if(LIVE.length) saveJSON(LVKEY,{ts:liveTs,results:LIVE});   // 0件で前回キャッシュを潰さない
-  toast(LIVE.length?`OSMから ${LIVE.length}件の候補（紫のピン・未確認）`:'この範囲では新しい候補が見つかりませんでした');
+  toast(LIVE.length?`OSMから ${LIVE.length}件の候補（紫のピン・未確認）${dropped?`／対象外 ${dropped}件は自動で除外`:''}`:'この範囲では新しい候補が見つかりませんでした');
   drawLive(); render();
 }
 document.getElementById('liveMapBtn').addEventListener('click',liveSearch);
@@ -722,12 +747,15 @@ function render(){
     notice+=`<div class="notice">前回のライブ検索結果 ${LIVE.length}件を表示中（${age}）。「このあたりを検索」で更新できます。</div>`;
   }
 
-  if(!base){ list.innerHTML=`<div class="hint">右下の<b> ◎ </b>で現在地を取得できます。<br>取れないときは<b>地図をタップ</b>すると、その地点から近い順に並びます。<br><br>釣り場に立ったまま開けば、そこから一番近い泊まり場が上に出ます。</div>`+foot;
+  if(!base){ markNearest(null);
+    list.innerHTML=`<div class="hint">右下の<b> ◎ </b>で現在地を取得できます。<br>取れないときは<b>地図をタップ</b>すると、その地点から近い順に並びます。<br><br>釣り場に立ったまま開けば、そこから一番近い泊まり場が上に出ます。</div>`+foot;
     document.getElementById('dataBtn').onclick=openData; return; }
-  if(!rows.length){ list.innerHTML=notice+`<div class="hint">条件に合う場所がありません。<br>フィルターを外してみてください。</div>`+foot;
+  if(!rows.length){ markNearest(null);
+    list.innerHTML=notice+`<div class="hint">条件に合う場所がありません。<br>フィルターを外してみてください。</div>`+foot;
     document.getElementById('dataBtn').onclick=openData; return; }
 
   rows.forEach(r=>r.d=dist(base,r.s)); rows.sort((a,b)=>a.d-b.d);
+  markNearest((rows.find(r=>r.s.t!==2)||{}).id||null);
   let html=notice, lastBand=null;
   rows.forEach(({s,id,d})=>{
     const b=band(d);

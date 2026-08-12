@@ -1,2 +1,6 @@
 .claude/
 index_5.html
+.DS_Store
+*.log
+node_modules/
+.netlify/
